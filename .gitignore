@@ -1,1 +1,7 @@
-Debug
+*.hex
+*.o
+*.lst
+*.bin
+*.elf
+*.map
+*.srec
