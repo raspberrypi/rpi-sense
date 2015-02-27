@@ -4,34 +4,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define GYRO_INT		(1 << PA0)
-#define ACCEL_MAG_INT1		(1 << PA1)
-#define ACCEL_MAG_INT2		(1 << PA2)
+#define LINE_INT		(1 << PB6)
+#define FRAME_INT		(1 << PB7)
 
-#define ROE_N			(1 << PB0)
-#define GOE_N			(1 << PB1)
-#define BOE_N			(1 << PB2)
-#define OE_N			(ROE_N | GOE_N | BOE_N)
-#define LED_SDI			(1 << PB3)
-#define LED_SDO			(1 << PB4)
-#define LED_CLK			(1 << PB5)
-#define LED_LE			(1 << PB6)
-
-#define COLUMN_INT		(1 << PC0)
-#define FRAME_INT		(1 << PC1)
-#define GPIO2_SDA1		(1 << PC4)
-#define GPIO3_SCL1		(1 << PC5)
-
-#define ACK_WRITE		0x60
-#define ACK_READ		0xA8
-#define DATA_RX			0x80
-#define DATA_TX_ACK		0xb8
-#define DATA_TX_NAK		0xc0
+#define LED_SDO			(1 << PC0)
+#define LED_CLKR		(1 << PC1)
+#define LED_LE			(1 << PC2)
+#define LED_SDI			(1 << PC3)
+#define LED_OE_N		(1 << PC7)
 
 #define set(port,x) port |= (x)
 #define clr(port,x) port &= ~(x)
 
-extern void draw_loop(uint8_t *data);
+extern void draw_loop(volatile uint8_t *data);
 extern void clear_gain(void);
 extern void delay(uint8_t ticks);
 
@@ -53,10 +38,10 @@ typedef enum {
 	THERM_READ = 10,
 } le_key;
 
-uint8_t intensity[192] = {
+volatile uint8_t intensity[192] = {
 	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
-	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
-	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
+	0x00, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
+	0x00, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
 
 	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
 	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
@@ -82,8 +67,8 @@ uint8_t intensity[192] = {
 	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
 	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
 
-	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
-	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
+	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x00,
+	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x00,
 	0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F,
 };
 
@@ -92,10 +77,9 @@ int main(void)
 	PORTA = 0;
 	PORTB = 0;
 	PORTC = 0;
-	PORTD = 0;
-	DDRA = GYRO_INT | ACCEL_MAG_INT1 | ACCEL_MAG_INT2;
-	DDRB = ROE_N | GOE_N | BOE_N | LED_SDI | LED_CLK | LED_LE;
-	DDRC = COLUMN_INT | FRAME_INT | GPIO2_SDA1;
+	PORTD = 0xFF;
+	DDRB = FRAME_INT | LINE_INT;
+	DDRC = LED_SDI | LED_CLKR | LED_LE | LED_OE_N;
 	DDRD = 0xFF;
 
 	TCCR0A = (1<<CS12);
@@ -103,8 +87,7 @@ int main(void)
 	TWBR = 0xff;
 	TWAR = 0x46 << 1;
 	TWCR = (1 << TWEA) | (1 << TWEN) | (1 << TWINT) | (1 << TWIE);
-	delay(255);
-	clear_gain();
+	//clear_gain();
 	sei();
 	draw_loop(intensity);
 	for(;;);

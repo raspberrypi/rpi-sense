@@ -6,45 +6,50 @@ PARAM	= 24
 PWM	= 25
 DI2C	= 26	; XL
 
-
 ; PORTB
-.equiv ROE_N	, PB0
-.equiv GOE_N	, PB1
-.equiv BOE_N	, PB2
-.equiv OE_N	, (1 << ROE_N) | (1 << GOE_N) | (1 << BOE_N)
-.equiv SDO	, PB3
-.equiv SDI	, PB4 
-.equiv CLOCK	, PB5
-.equiv LE	, PB6
+.equiv LINE_INT	, PB6
+.equiv FRAME_INT, PB7
 
 ; PORTC
-.equiv LINE_INT		, PC0
-.equiv FRAME_INT	, PC1
-.equiv SDA		, PC4
-.equiv SCL		, PC5
+.equiv LED_SDO	, PC0
+.equiv LED_CLKR	, PC1
+.equiv LED_LE	, PC2
+.equiv LED_SDI	, PC3
+.equiv SDA	, PC4
+.equiv SCL	, PC5
+.equiv LED_OE_N	, PC7
 
 .macro CLOCK_OUT
-	SBI	_SFR_IO_ADDR(PORTB), CLOCK
-	CBI	_SFR_IO_ADDR(PORTB), CLOCK
+	SBI	_SFR_IO_ADDR(PORTC), LED_CLKR
+	CBI	_SFR_IO_ADDR(PORTC), LED_CLKR
 .endm
 
 .macro COL_OUT reg
 	CP	PWM, \reg
-	BRSH	Lclear\reg
-	SBI	_SFR_IO_ADDR(PORTB), SDO
-	RJMP	Ldone\reg
-Lclear\reg:
-	CBI	_SFR_IO_ADDR(PORTB), SDO
-Ldone\reg:
+	BRSH	lclear\reg
+	SBI	_SFR_IO_ADDR(PORTC), LED_SDI
+	RJMP	ldone\reg
+lclear\reg:
+	CBI	_SFR_IO_ADDR(PORTC), LED_SDI
+ldone\reg:
 	CLOCK_OUT
 .endm
 
 .global draw_loop
-.global clear_gain
 .global delay
+.global read_data
+.global write_data
 .global TWI_vect
 
 .extern delay
+
+.section .data
+KEYS:
+.byte	0xff
+WHO_AM_I:
+.byte	's'
+
+.section .text
 
 .func draw_loop
 draw_loop:
@@ -52,7 +57,7 @@ draw_loop:
 Lframe_loop:
 	CBI	_SFR_IO_ADDR(PORTC), FRAME_INT
 	MOVW	YL, ZL
-	LDI	LINE, 1
+	LDI	LINE, 0xFE
 Lline_loop:
 	OUT	_SFR_IO_ADDR(PORTD), LINE
 	LDI	PWM, 0
@@ -103,34 +108,33 @@ Lpwm_loop:
 	COL_OUT	r19
 	COL_OUT	r20
 	COL_OUT	r21
-	SBI	_SFR_IO_ADDR(PORTB), LE
+	SBI	_SFR_IO_ADDR(PORTC), LED_LE
 	COL_OUT	r22
 	COL_OUT	r23
-	CBI	_SFR_IO_ADDR(PORTB), LE
+	CBI	_SFR_IO_ADDR(PORTC), LED_LE
 	INC	PWM
 	SBRS	PWM, 6
 	RJMP	Lpwm_loop
-	LSL	LINE
-	BRCS	lframeend
+	ROL	LINE
+	BRCC	lframeend
+	INC	LINE
 	RJMP	Lline_loop
 lframeend:
-	SBI	_SFR_IO_ADDR(PORTC), FRAME_INT
+	SBI	_SFR_IO_ADDR(PORTB), FRAME_INT
 	CBI	_SFR_IO_ADDR(PORTD), 7		; Clear PORTD
-	;LDI	PARAM, 255			; 5e-3/(8e6/256)^-1 = 156
-	;RCALL	delay
-	//disable RGB/OE (portb 0-2)
-	LDI	PARAM, 7			; TODO: Scan keys
-	OUT	_SFR_IO_ADDR(PORTB), PARAM
-	CBI	_SFR_IO_ADDR(DDRD), 7 
-	SBI	_SFR_IO_ADDR(PIND), 7
-	NOP
-	NOP
-	NOP
-	NOP
-	CBI	_SFR_IO_ADDR(PIND), 7
-	SBI	_SFR_IO_ADDR(DDRD), 7
-	LDI	PARAM, 0
-	OUT	_SFR_IO_ADDR(PORTB), PARAM	;/Scan
+
+	SBI	_SFR_IO_ADDR(PORTB), LED_OE_N	; Scan
+	LDI	PARAM, 0xF8
+	OUT	_SFR_IO_ADDR(PIND), PARAM
+	COM	PARAM
+	OUT	_SFR_IO_ADDR(DDRD), PARAM
+	IN	PARAM, _SFR_IO_ADDR(PIND)
+	STS	KEYS, PARAM
+	LDI	PARAM, 0xFF
+	OUT	_SFR_IO_ADDR(DDRD), PARAM
+	COM	PARAM
+	OUT	_SFR_IO_ADDR(PIND), PARAM
+	CBI	_SFR_IO_ADDR(PORTB), LED_OE_N	; /Scan
 	RJMP	Lframe_loop
 	RET
 .endfunc
@@ -140,46 +144,101 @@ delay:
 	PUSH	r19
 	PUSH	r20
 	IN	r20, _SFR_IO_ADDR(TCNT0)	; start = TCNT0;
-Lloop:
+lloop:
 	IN	r19, _SFR_IO_ADDR(TCNT0)	; do {
 	SUB	r19, r20			; diff = TCNT0 - start;
 	CP	r19, LINE			; } while (diff < ticks);
-	BRLO	Lloop
+	BRLO	lloop
 	POP	r20
 	POP	r19
 	RET
  .endfunc
 
- ;TODO: Make this a generic read/write function
-.func clear_gain
-clear_gain:
-	CBI	_SFR_IO_ADDR(PORTB), SDO
+.func write_data
+; r20-23 DATA
+; r24 TYPE
+write_data:
+	PUSH	r18
+	;PUSH	r20
+	PUSH	r21
+	PUSH	r22
+	PUSH	r23
+	PUSH	r24
+	LDI	r18, 24	;
+1:						; do {
+	SBRS	r23, 0				; 	if (data&1)
+	RJMP	2f
+	SBI	_SFR_IO_ADDR(PORTC), LED_SDI	; 		set LED_SDI;
+	RJMP	3f
+2:						; 	else
+	CBI	_SFR_IO_ADDR(PORTC), LED_SDI	;		clr LED_SDI;
+3:
+	ASR	r23				; 	data <<= 1;
+	ROR	r22
+	ROR	r21
+	;ROR	r20								; Don't need?
+	CP	r24, r18			; 	if (type == i)
+	BRNE	4f
+	SBI	_SFR_IO_ADDR(PORTC), LED_LE	; 		set LDE_LE;
+4:
 	CLOCK_OUT
+	DEC	r18				; 	i--;
+	BRNE	1b				; } while (i!=0);
+	CBI	_SFR_IO_ADDR(PORTC), LED_LE	; 		clr LDE_LE
+	POP	r24
+	POP	r23
+	POP	r22
+	POP	r21
+	;POP	r20
+	POP	r18
+	RET
+.endfunc
+
+.func read_data
+; r22-25 RETURN
+; r24 TYPE
+read_data:
+	PUSH	r18
+	PUSH	r19
+	;PUSH	r20
+	PUSH	r21
+	PUSH	r22
+	PUSH	r23
+	PUSH	r24
+	LDI	r18, 24	;
+1:						; do {
+	IN	r19, _SFR_IO_ADDR(PORTC)	; ret |= PINC&1;
+	ANDI	r19, LED_SDI
+
+
+	SBRS	r23, 0				; 	if (data&1)
+	RJMP	2f
+	SBI	_SFR_IO_ADDR(PORTC), LED_SDI	; 		set LED_SDI;
+	RJMP	3f
+2:						; 	else
+	CBI	_SFR_IO_ADDR(PORTC), LED_SDI	;		clr LED_SDI;
+3:
+	ASR	r23				; 	data <<= 1;
+	ROR	r22
+	ROR	r21
+	;ROR	r20								; Don't need?
+
+
+	CP	r24, r18			; 	if (type == i)
+	BRNE	4f
+	SBI	_SFR_IO_ADDR(PORTC), LED_LE	; 		set LDE_LE;
+4:
 	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	SBI	_SFR_IO_ADDR(PORTB), LE
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CLOCK_OUT
-	CBI	_SFR_IO_ADDR(PORTB), LE
+	DEC	r18				; 	i--;
+	BRNE	1b				; } while (i!=0);
+	CBI	_SFR_IO_ADDR(PORTC), LED_LE	; 		clr LDE_LE
+	POP	r24
+	POP	r23
+	POP	r22
+	POP	r21
+	;POP	r20
+	POP	r19
+	POP	r18
 	RET
 .endfunc
 
@@ -203,7 +262,7 @@ lreceive:
 	LDS	PARAM, TWDR	; Data
 	ST	X+, PARAM
 	LDI	PARAM,  (1<<TWEA) | (1<<TWEN) | (1<<TWIE) | (1<<TWINT)
-ldone:	
+ldone:
 	STS	TWCR, PARAM
 	OUT	_SFR_IO_ADDR(SREG), PWM
 	POP	PWM

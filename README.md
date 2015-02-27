@@ -9,4 +9,4 @@ https://github.com/kcuzner/avrdude
 ## Compiling
 `make`
 ## Flashing
-`make flash`
+`sudo make flash`

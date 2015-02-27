@@ -3,7 +3,7 @@ OBJ			= main.o rpi-sense.o
 
 MCU_TARGET		= attiny88
 
-OPTIMIZE		= -O2
+OPTIMIZE		= -Os
 
 CC			= avr-gcc
 
@@ -25,6 +25,7 @@ $(PRG).elf: $(OBJ)
 main.o: main.c
 rpi-sense.o: rpi-sense.S
 
+.PHONY: clean
 clean:
 	rm -rf *.o $(PRG).elf *.eps *.png *.pdf *.bak 
 	rm -rf *.lst *.map $(EXTRA_CLEAN_FILES)
