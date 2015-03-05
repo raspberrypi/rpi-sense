@@ -41,19 +41,15 @@ ldone\reg:
 .global write_data
 .global TWI_vect
 
-.extern delay
-
-.section .data
-KEYS:
-.byte	0xff
-WHO_AM_I:
-.byte	's'
+.extern pixels
+.extern id
+.extern key
 
 .section .text
-
 .func draw_loop
 draw_loop:
-	MOVW	ZL, PARAM
+	LDI	ZL, lo8(pixels)
+	LDI	ZH, hi8(pixels)
 Lframe_loop:
 	CBI	_SFR_IO_ADDR(PORTC), FRAME_INT
 	MOVW	YL, ZL
@@ -125,15 +121,16 @@ lframeend:
 
 	SBI	_SFR_IO_ADDR(PORTB), LED_OE_N	; Scan
 	LDI	PARAM, 0xF8
-	OUT	_SFR_IO_ADDR(PIND), PARAM
+	OUT	_SFR_IO_ADDR(PORTD), PARAM
 	COM	PARAM
 	OUT	_SFR_IO_ADDR(DDRD), PARAM
-	IN	PARAM, _SFR_IO_ADDR(PIND)
-	STS	KEYS, PARAM
+	IN	PARAM, _SFR_IO_ADDR(PORTD)
+	STS	keys, PARAM
 	LDI	PARAM, 0xFF
 	OUT	_SFR_IO_ADDR(DDRD), PARAM
 	COM	PARAM
 	OUT	_SFR_IO_ADDR(PIND), PARAM
+
 	CBI	_SFR_IO_ADDR(PORTB), LED_OE_N	; /Scan
 	RJMP	Lframe_loop
 	RET

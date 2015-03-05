@@ -7,17 +7,12 @@
 #include <linux/delay.h>
 #include <linux/uaccess.h>
 
-#define ADDRESS 0x46
-
 struct ledhat_dev_t {
-	struct i2c_client *ledhat_client;
+	struct i2c_client *client;
 	void *vmem;
 	u32 vmemsize;
 	u8 gamma[32];
 };
-
-static int ledhat_init(void);
-static void ledhat_exit(void);
 
 static int ledhatfb_probe(struct i2c_client *client,
 			  const struct i2c_device_id *id);
@@ -35,23 +30,29 @@ static void *rvmalloc(unsigned long size);
 static void rvfree(void *mem, unsigned long size);
 
 struct ledhat_dev_t ledhat_dev = {
-	.ledhat_client = NULL,
+	.client = NULL,
 	.vmem= NULL,
 	.vmemsize =  128,
 	.gamma = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01,
 		  0x02, 0x02, 0x03, 0x03, 0x04, 0x05, 0x06, 0x07,
 		  0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0E, 0x0F, 0x11,
-		  0x12, 0x14, 0x15, 0x17, 0x19, 0x1B, 0x1D, 0x1F, },
+		  0x12, 0x14, 0x15, 0x17, 0x19, 0x1B, 0x1D, 0x1F,},
 };
+
+#ifdef CONFIG_OF
+static const struct of_device_id ledhatfb_dt_match[] = {
+	{ .compatible = "rpi,ledhatfb" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, ledhatfb_dt_match);
+#endif
 
 static const struct i2c_device_id ledhat_i2c_id[] = {
 	{ "ledhatfb", 0 },
 	{},
 };
 
-static struct i2c_board_info ledhat_info = {
-	I2C_BOARD_INFO("ledhatfb", ADDRESS),
-};
+MODULE_DEVICE_TABLE(i2c, ledhat_i2c_id);
 
 static struct i2c_driver ledhatfb_driver = {
 	.probe = ledhatfb_probe,
@@ -60,6 +61,7 @@ static struct i2c_driver ledhatfb_driver = {
 	.driver = {
 		.name = "ledhatfb",
 		.owner = THIS_MODULE,
+		.of_match_table = of_match_ptr(ledhatfb_dt_match),
 	},
 };
 
@@ -79,8 +81,8 @@ static struct fb_var_screeninfo ledhatfb_default = {
 	.yres_virtual	= 8,
 	.bits_per_pixel = 16,
 	.red		= {11, 5, 0},
-      	.green		= {5, 6, 0},
-      	.blue		= {0, 5, 0},
+	.green		= {5, 6, 0},
+	.blue		= {0, 5, 0},
 };
 
 static struct fb_fix_screeninfo ledhatfb_fix = {
@@ -99,45 +101,6 @@ static struct fb_deferred_io ledhatfb_defio = {
 	.deferred_io	= ledhatfb_deferred_io,
 };
 
-static int ledhat_init(void)
-{
-	int result = 0;
-	struct i2c_adapter *i2c_adap;
-	i2c_adap = i2c_get_adapter(1);
-	if (!i2c_adap){
-		pr_err("Failed to get I2C adapter 1.\n");
-		result = -EINVAL;
-		goto err;
-	}
-
-	ledhat_dev.ledhat_client = i2c_new_device(i2c_adap, &ledhat_info);
-	if (!ledhat_dev.ledhat_client){
-		pr_err("Failed to register i2c device.\n");
-		result = -EINVAL;
-		goto end;
-	}
-	result = i2c_add_driver(&ledhatfb_driver);
-	if (result){
-		pr_err("Failed to register i2c driver.\n");
-		result = -EINVAL;
-		goto err_dev;
-	}
-
-	goto end;
-err_dev:
-	i2c_unregister_device(ledhat_dev.ledhat_client);
-end:
-	i2c_put_adapter(i2c_adap);
-err:
-	return result;
-}
-
-static void ledhat_exit(void)
-{
-	i2c_unregister_device(ledhat_dev.ledhat_client);
-	i2c_del_driver(&ledhatfb_driver);
-}
-
 static int ledhatfb_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
@@ -145,20 +108,20 @@ static int ledhatfb_probe(struct i2c_client *client,
 	int result = -ENOMEM;
 
 	if (!(ledhat_dev.vmem = rvmalloc(ledhat_dev.vmemsize))){
-		dev_err(&ledhat_dev.ledhat_client->dev, "Could not allocate video memory.\n");
+		dev_err(&client->dev, "Could not allocate video memory.\n");
 		return result;
 	}
 
 	info = framebuffer_alloc(0, &client->dev);
 	if (!info){
-		dev_err(&ledhat_dev.ledhat_client->dev, "Could not allocate fb_info.\n");
+		dev_err(&client->dev, "Could not allocate fb_info.\n");
 		goto err_vmem;
 	}
 
 
 	ledhatfb_fix.smem_start = (unsigned long)ledhat_dev.vmem;
 	ledhatfb_fix.smem_len = ledhat_dev.vmemsize;
-	
+
 	info->fbops = &ledhatfb_ops;
 	info->var = ledhatfb_default;
 	info->fbdefio = &ledhatfb_defio;
@@ -171,15 +134,16 @@ static int ledhatfb_probe(struct i2c_client *client,
 
 	result = register_framebuffer(info);
 	if (result < 0){
-		dev_err(&ledhat_dev.ledhat_client->dev, "Could not register framebuffer.\n");
+		dev_err(&client->dev, "Could not register framebuffer.\n");
 		goto err_fb;
 	}
-	schedule_delayed_work(&info->deferred_work, ledhatfb_defio.delay);
 
-	dev_info(&ledhat_dev.ledhat_client->dev,
+	ledhat_dev.client = client;
+	dev_info(&client->dev,
 	       "fb%d, using %u bytes of video memory\n",
 	       info->node, ledhat_dev.vmemsize);
-	
+	schedule_delayed_work(&info->deferred_work, ledhatfb_defio.delay);
+
 	i2c_set_clientdata(client, info);
 
 	return result;
@@ -208,8 +172,8 @@ static void ledhatfb_deferred_io(struct fb_info *info,
 	int j;
 	u8 *array;
 	u16 *mem = ledhat_dev.vmem;
-	
-	array = kzalloc(ledhat_dev.vmemsize, GFP_KERNEL);
+
+	array = kzalloc(192, GFP_KERNEL);
 	if (!array)
 		return;
 
@@ -220,8 +184,8 @@ static void ledhatfb_deferred_io(struct fb_info *info,
 			array[(j*24)+(i+16)] = ledhat_dev.gamma[(mem[(j*8)+i]) & 0x1F];
 		}
 	}
-							
-	i2c_master_send(ledhat_dev.ledhat_client, array, 192);
+
+	i2c_master_send(ledhat_dev.client, array, 192);
 	kfree(array);
 }
 
@@ -287,8 +251,8 @@ static void rvfree(void *mem, unsigned long size)
 	vfree(mem);
 }
 
-module_init(ledhat_init);
-module_exit(ledhat_exit);
+module_i2c_driver(ledhatfb_driver);
+
 MODULE_DESCRIPTION("FB driver for the Raspberry Pi LEDHat");
 MODULE_AUTHOR("Serge Schneider <serge@raspberrypi.org>");
 MODULE_LICENSE("GPL");

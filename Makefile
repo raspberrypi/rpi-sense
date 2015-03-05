@@ -94,5 +94,5 @@ pdf: $(PRG).pdf
 	$(FIG2DEV) -L png $< $@
 
 # Flash
-flash:
-	avrdude -c linuxspi -p t88 -P /dev/spidev0.0 -U flash:w:$(PRG).hex
+flash: $(PRG).hex
+	sudo avrdude -c linuxspi -p t88 -P /dev/spidev0.0 -U flash:w:$(PRG).hex
