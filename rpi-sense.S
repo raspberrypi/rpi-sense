@@ -4,10 +4,16 @@
 LINE	= 24
 PARAM	= 24
 PWM	= 25
-DI2C	= 26	; XL
+I2C_OFF	= 26	; XL
+
+.equiv I2C_WAI	, 0xf0
+.equiv I2C_KEYS	, 0xf1
+.equiv I2C_EE_WP, 0xf2
+.equiv I2C_ID	, 's'
 
 ; PORTB
-.equiv LINE_INT	, PB6
+.equiv EE_WP	, PB0
+.equiv KEYS_INT	, PB6
 .equiv FRAME_INT, PB7
 
 ; PORTC
@@ -44,15 +50,16 @@ ldone\reg:
 .extern pixels
 .extern id
 .extern key
+.extern i2c_reg
 
 .section .text
 .func draw_loop
 draw_loop:
-	LDI	ZL, lo8(pixels)
-	LDI	ZH, hi8(pixels)
+	
 Lframe_loop:
 	CBI	_SFR_IO_ADDR(PORTC), FRAME_INT
-	MOVW	YL, ZL
+	LDI	YL, lo8(pixels)
+	LDI	YH, hi8(pixels)
 	LDI	LINE, 0xFE
 Lline_loop:
 	OUT	_SFR_IO_ADDR(PORTD), LINE
@@ -124,13 +131,19 @@ lframeend:
 	OUT	_SFR_IO_ADDR(PORTD), PARAM
 	COM	PARAM
 	OUT	_SFR_IO_ADDR(DDRD), PARAM
-	IN	PARAM, _SFR_IO_ADDR(PORTD)
+	LDS	PWM, keys
+	IN	PARAM, _SFR_IO_ADDR(PIND)
+	COM	PARAM
+	LSR	PARAM
+	LSR	PARAM
+	LSR	PARAM
 	STS	keys, PARAM
+	CPSE	PARAM, PWM
+	SBI     _SFR_IO_ADDR(PORTB), KEYS_INT
 	LDI	PARAM, 0xFF
 	OUT	_SFR_IO_ADDR(DDRD), PARAM
 	COM	PARAM
-	OUT	_SFR_IO_ADDR(PIND), PARAM
-
+	OUT	_SFR_IO_ADDR(PORTD), PARAM
 	CBI	_SFR_IO_ADDR(PORTB), LED_OE_N	; /Scan
 	RJMP	Lframe_loop
 	RET
@@ -239,39 +252,118 @@ read_data:
 	RET
 .endfunc
 
-;TODO: Add reads and check ranges.
+;TODO: Add reads and NACK bad addresses.
+;PARAM (r24) - TWSR
+;PWM (r25) - SREG
+;DI2C/XL (r26) - Address
 .func TWI_vect
 TWI_vect:
 	PUSH	PARAM
 	PUSH	PWM
+	PUSH	YL
+	PUSH	YH
+	PUSH	I2C_OFF
 	IN	PWM, _SFR_IO_ADDR(SREG)
 	LDS	PARAM, TWSR
 	ANDI	PARAM, 0xF8
+	LDS	I2C_OFF, i2c_reg
 	CPI	PARAM, TW_SR_DATA_ACK		; Slave Receive Data
 	BREQ	lreceive
+	CPI	PARAM, TW_SR_SLA_ACK		; Slave Receive ACK Address
+	BREQ	lrack
 	CPI	PARAM, TW_ST_DATA_ACK		; Slave Transmit Data
-	BREQ	lsend
-	CPI	PARAM, TW_SR_SLA_ACK		; Slave ACK Address
-	BREQ	lack
+	BREQ	ltsend
+	CPI	PARAM, TW_ST_SLA_ACK		; Slave Receive ACK Address
+	BREQ	ltack
+	CPI	PARAM, TW_ST_DATA_NACK
+	BREQ	ltdnack
 	LDI	PARAM,  (1<<TWEA) | (1<<TWEN) | (1<<TWIE) | (1<<TWINT) ;ELSE
 	RJMP	ldone
 lreceive:
-	LDS	PARAM, TWDR	; Data
-	ST	X+, PARAM
+	LDS	PARAM, TWDR			; Data
+	CPI	I2C_OFF, 193			; if address<=192
+	BRLO	lrspixel
+	CPI	I2C_OFF, 0xff			; if address==0xff
+	BREQ	lrsreg
+	CPI	I2C_OFF, I2C_EE_WP
+	BREQ	lree
+	; NACK here
+	RJMP	lrdone				; else...
+lree:
+	SBI	_SFR_IO_ADDR(PORTB), EE_WP
+	CPSE	PARAM, 0
+	CBI	_SFR_IO_ADDR(PORTB), EE_WP
+	RJMP	lrdone
+lrsreg:
+	STS	i2c_reg, PARAM			; address = DATA
+	RJMP	lrdone
+lrspixel:
+	LDI	YL, lo8(pixels)
+	LDI	YH, hi8(pixels)
+	ADD	YL, I2C_OFF
+	INC	I2C_OFF
+	STS	i2c_reg, I2C_OFF
+	CLR	I2C_OFF
+	ADC	YH, I2C_OFF
+	ST	Y, PARAM
+lrdone:
 	LDI	PARAM,  (1<<TWEA) | (1<<TWEN) | (1<<TWIE) | (1<<TWINT)
 ldone:
 	STS	TWCR, PARAM
 	OUT	_SFR_IO_ADDR(SREG), PWM
+	POP	I2C_OFF
+	POP	YH
+	POP	YL
 	POP	PWM
 	POP	PARAM
 	RETI
-lack:
-	MOVW	DI2C, ZL
+lrack:
+	LDI	PARAM, 0xff		; Address = 0xff
+	STS	i2c_reg, PARAM
 	LDI	PARAM,  (1<<TWEA) | (1<<TWEN) | (1<<TWIE) | (1<<TWINT)
 	RJMP	ldone
-lsend:
-	LD	PARAM, X+
-	STS	TWSR, PARAM
+ltack:
+	RJMP	ltsend
+ltdnack:
+	RJMP	ltdone
+ltsend:
+	CPI     I2C_OFF, 193                    ; if address<=192
+        BRLO    lsspixel
+        CPI     I2C_OFF, I2C_KEYS
+        BREQ    lsskeys
+        CPI     I2C_OFF, I2C_WAI                ; if address==I2C_WAI
+        BREQ    ltswai
+        CPI     I2C_OFF, I2C_EE_WP
+        BREQ    lssee
+	LDI	PARAM, 0xff
+	STS	TWDR, PARAM
+	RJMP	ltdone
+ltswai:
+        LDI     PARAM, I2C_ID
+        STS     TWDR, PARAM
+        RJMP    ltdone
+lsskeys:
+        CBI     _SFR_IO_ADDR(PORTB), KEYS_INT
+        LDS	PARAM, keys
+        STS     TWDR, PARAM
+	RJMP    ltdone
+lssee:
+        LDI     PARAM, 0
+        SBIS    _SFR_IO_ADDR(PORTB), EE_WP
+        LDI     PARAM, 1
+        STS     TWDR, PARAM
+        RJMP    ltdone
+lsspixel:
+        LDI     YL, lo8(pixels)
+        LDI     YH, hi8(pixels)
+        ADD     YL, I2C_OFF
+        INC     I2C_OFF
+        STS     i2c_reg, I2C_OFF
+        CLR     I2C_OFF
+        ADC     YH, I2C_OFF
+        LD      I2C_OFF, Y
+        STS     TWDR, I2C_OFF
+ltdone:
 	LDI	PARAM,  (1<<TWEA) | (1<<TWEN) | (1<<TWIE) | (1<<TWINT)
 	RJMP	ldone
 .endfunc

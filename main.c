@@ -4,7 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define LINE_INT		(1 << PB6)
+#define EE_WP			(1 << PB0)
+#define KEYS_INT		(1 << PB6)
 #define FRAME_INT		(1 << PB7)
 
 #define LED_SDO			(1 << PC0)
@@ -73,21 +74,20 @@ volatile uint8_t pixels[] = {
 	0x0F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x0F, 0x02,
 };
 
-const char id = 's';
 volatile char keys;
+volatile char i2c_reg = 0xff;
 
 int main(void)
 {
 	PORTA = 0;
-	PORTB = 0;
+	PORTB = 1;
 	PORTC = 0;
 	PORTD = 0xFF;
-	DDRB = FRAME_INT | LINE_INT;
+	DDRB = EE_WP | FRAME_INT | KEYS_INT;
 	DDRC = LED_SDI | LED_CLKR | LED_LE | LED_OE_N;
 	DDRD = 0xFF;
 
 	TCCR0A = (1<<CS12);
-
 	TWBR = 0xff;
 	TWAR = 0x46 << 1;
 	TWCR = (1 << TWEA) | (1 << TWEN) | (1 << TWINT) | (1 << TWIE);
