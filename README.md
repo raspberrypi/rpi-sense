@@ -24,11 +24,10 @@ Enable I2C in `raspi-config`
 
 Boards with a programmed EEPROM will have nodes populated in the device tree automatically.
 
-Add the following modules to `/etc/modules`:
+Add the following module to `/etc/modules`:
 
 ```
-ledhatfb
-st_pressure_i2c
+i2c-dev
 ```
 
 ## Using IIO
