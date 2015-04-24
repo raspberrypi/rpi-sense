@@ -22,9 +22,7 @@ Ensure SPI is enabled.
 
 Enable I2C in `raspi-config`
 
-Enable the rpi-sense overlay in config.txt:
-
-`dtoverlay=rpi-sense`
+Boards with a programmed EEPROM will have nodes populated in the device tree automatically.
 
 Add the following modules to `/etc/modules`:
 
