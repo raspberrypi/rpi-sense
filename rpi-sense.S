@@ -38,9 +38,11 @@ PWM	= 25
 I2C_OFF	= 26	; XL
 
 .equiv I2C_WAI	, 0xf0
-.equiv I2C_KEYS	, 0xf1
-.equiv I2C_EE_WP, 0xf2
+.equiv I2C_VER	, 0xf1
+.equiv I2C_KEYS	, 0xf2
+.equiv I2C_EE_WP, 0xf3
 .equiv I2C_ID	, 's'
+.equiv VERSION	, 0
 
 ; PORTB
 .equiv EE_WP	, PB0
@@ -86,7 +88,6 @@ ldone\reg:
 .section .text
 .func draw_loop
 draw_loop:
-	
 Lframe_loop:
 	CBI	_SFR_IO_ADDR(PORTC), FRAME_INT
 	LDI	YL, lo8(pixels)
@@ -298,14 +299,14 @@ TWI_vect:
 	LDS	PARAM, TWSR
 	ANDI	PARAM, 0xF8
 	LDS	I2C_OFF, i2c_reg
+	CPI	PARAM, TW_ST_SLA_ACK		; Slave Receive ACK Address
+	BREQ	ltsend
 	CPI	PARAM, TW_SR_DATA_ACK		; Slave Receive Data
 	BREQ	lreceive
 	CPI	PARAM, TW_SR_SLA_ACK		; Slave Receive ACK Address
 	BREQ	lrack
 	CPI	PARAM, TW_ST_DATA_ACK		; Slave Transmit Data
 	BREQ	ltsend
-	CPI	PARAM, TW_ST_SLA_ACK		; Slave Receive ACK Address
-	BREQ	ltack
 	CPI	PARAM, TW_ST_DATA_NACK
 	BREQ	ltdnack
 	LDI	PARAM,  (1<<TWEA) | (1<<TWEN) | (1<<TWIE) | (1<<TWINT) ;ELSE
@@ -353,19 +354,19 @@ lrack:
 	STS	i2c_reg, PARAM
 	LDI	PARAM,  (1<<TWEA) | (1<<TWEN) | (1<<TWIE) | (1<<TWINT)
 	RJMP	ldone
-ltack:
-	RJMP	ltsend
 ltdnack:
 	RJMP	ltdone
 ltsend:
 	CPI     I2C_OFF, 193                    ; if address<=192
-        BRLO    lsspixel
+        BRLO    ltspixel
         CPI     I2C_OFF, I2C_KEYS
-        BREQ    lsskeys
+        BREQ    ltskeys
         CPI     I2C_OFF, I2C_WAI                ; if address==I2C_WAI
         BREQ    ltswai
         CPI     I2C_OFF, I2C_EE_WP
-        BREQ    lssee
+        BREQ    ltsee
+	CPI     I2C_OFF, I2C_VER
+        BREQ    ltsver
 	LDI	PARAM, 0xff
 	STS	TWDR, PARAM
 	RJMP	ltdone
@@ -373,18 +374,22 @@ ltswai:
         LDI     PARAM, I2C_ID
         STS     TWDR, PARAM
         RJMP    ltdone
-lsskeys:
+ltsver:
+        LDI     PARAM, VERSION
+        STS     TWDR, PARAM
+        RJMP    ltdone
+ltskeys:
         CBI     _SFR_IO_ADDR(PORTB), KEYS_INT
         LDS	PARAM, keys
         STS     TWDR, PARAM
 	RJMP    ltdone
-lssee:
+ltsee:
         LDI     PARAM, 0
         SBIS    _SFR_IO_ADDR(PORTB), EE_WP
         LDI     PARAM, 1
         STS     TWDR, PARAM
         RJMP    ltdone
-lsspixel:
+ltspixel:
         LDI     YL, lo8(pixels)
         LDI     YH, hi8(pixels)
         ADD     YL, I2C_OFF
