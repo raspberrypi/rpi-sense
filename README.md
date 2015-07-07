@@ -4,9 +4,7 @@ WIP LED HAT firmware and driver
 
 ## Prerequisites
 
-`sudo apt-get install gcc-avr avr-libc`
-
-https://github.com/kcuzner/avrdude
+`sudo apt-get install gcc-avr avr-libc avrdude`
 
 ## Compiling
 
